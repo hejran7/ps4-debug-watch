@@ -1,36 +1,65 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="4.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <!--Project was exported from assembly: C:\Users\x\Downloads\PS4\debugwatch\dbgw\dbgw.exe-->
+<Project Sdk="Microsoft.NET.Sdk">
+
   <PropertyGroup>
-    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
-    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProjectGuid>{3E3BCEFE-FC01-4385-BECB-EBFADEE3CB5B}</ProjectGuid>
     <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>dbgw</AssemblyName>
-    <TargetFrameworkVersion>v4.0</TargetFrameworkVersion>
-    <TargetFrameworkProfile />
-    <ApplicationVersion>1.0.0.0</ApplicationVersion>
-    <FileAlignment>512</FileAlignment>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <Prefer32Bit>false</Prefer32Bit>
     <PlatformTarget>AnyCPU</PlatformTarget>
-    <DebugSymbols>true</DebugSymbols>
-    <DebugType>full</DebugType>
-    <Optimize>false</Optimize>
-    <OutputPath>bin\Debug\</OutputPath>
-    <DefineConstants>DEBUG;TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
+    <Optimize Condition="'$(Configuration)' == 'Release'">true</Optimize>
+    <!-- Keep our own AssemblyInfo.cs instead of letting the SDK auto-generate it -->
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <Nullable>disable</Nullable>
+    <LangVersion>7.3</LangVersion>
+    <!-- Must match the namespace in code so .resx manifest names resolve correctly -->
+    <RootNamespace>debugwatch</RootNamespace>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <PlatformTarget>AnyCPU</PlatformTarget>
-    <DebugType>pdbonly</DebugType>
-    <Optimize>true</Optimize>
-    <OutputPath>bin\Release\</OutputPath>
-    <DefineConstants>TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-  </PropertyGroup>
+
+  <!-- Tie each .resx to its code-behind so MSBuild names the resource manifest
+       "debugwatch.DebugWatchForm.resources" instead of "dbgw.debugwatch.DebugWatchForm.resources" -->
+  <ItemGroup>
+    <EmbeddedResource Update="debugwatch\DebugWatchForm.resx">
+      <DependentUpon>DebugWatchForm.cs</DependentUpon>
+    </EmbeddedResource>
+    <EmbeddedResource Update="debugwatch\AssemblerView.resx">
+      <DependentUpon>AssemblerView.cs</DependentUpon>
+    </EmbeddedResource>
+    <EmbeddedResource Update="debugwatch\MemoryMapView.resx">
+      <DependentUpon>MemoryMapView.cs</DependentUpon>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <!-- Auto-run "dotnet restore" if the assets file is missing (e.g. first build after clone).
+       SkipAutoRestore=true is passed into the restore call to prevent infinite recursion,
+       since dotnet restore itself invokes MSBuild and would re-trigger this target. -->
+  <Target Name="AutoRestore"
+          BeforeTargets="CollectPackageReferences"
+          Condition="'$(SkipAutoRestore)' != 'true' And !Exists('$(MSBuildProjectDirectory)\obj\project.assets.json')">
+    <Exec Command="dotnet restore &quot;$(MSBuildProjectFullPath)&quot; -p:SkipAutoRestore=true" />
+  </Target>
+
+  <!-- Stop the SDK from auto-copying the entire lib\ folder to the output directory -->
+  <ItemGroup>
+    <None Remove="lib\**\*" />
+  </ItemGroup>
+
+  <!-- Copy native keystone.dll to the output folder where KeystoneImports expects it.
+       Place keystone.dll from https://github.com/keystone-engine/keystone/releases into:
+         lib\win64\keystone.dll   (64-bit)
+         lib\win32\keystone.dll   (32-bit) -->
+  <ItemGroup>
+    <None Include="lib\win64\keystone.dll" Condition="Exists('lib\win64\keystone.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>win64\keystone.dll</Link>
+    </None>
+    <None Include="lib\win32\keystone.dll" Condition="Exists('lib\win32\keystone.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>win32\keystone.dll</Link>
+    </None>
+  </ItemGroup>
+
+  <!-- Local DLL references — lib\ folder ships alongside the project -->
   <ItemGroup>
     <Reference Include="Be.Windows.Forms.HexBox">
       <HintPath>lib\Be.Windows.Forms.HexBox.dll</HintPath>
@@ -38,58 +67,9 @@
     <Reference Include="SharpDisasm">
       <HintPath>lib\SharpDisasm.dll</HintPath>
     </Reference>
-    <Reference Include="System" />
-    <Reference Include="System.Core" />
-    <Reference Include="System.Drawing" />
-    <Reference Include="System.Windows.Forms" />
     <Reference Include="libdebug">
       <HintPath>lib\libdebug.dll</HintPath>
     </Reference>
   </ItemGroup>
-  <ItemGroup>
-    <Compile Include="debugwatch\Extensions.cs" />
-    <Compile Include="KeystoneNET\Arm64Error.cs" />
-    <Compile Include="KeystoneNET\ArmError.cs" />
-    <Compile Include="KeystoneNET\HexagonError.cs" />
-    <Compile Include="KeystoneNET\KeystoneArchitecture.cs" />
-    <Compile Include="KeystoneNET\KeystoneMode.cs" />
-    <Compile Include="KeystoneNET\KeystoneError.cs" />
-    <Compile Include="KeystoneNET\KeystoneOptionType.cs" />
-    <Compile Include="KeystoneNET\KeystoneOptionValue.cs" />
-    <Compile Include="KeystoneNET\MipsError.cs" />
-    <Compile Include="KeystoneNET\PpcError.cs" />
-    <Compile Include="KeystoneNET\SparcError.cs" />
-    <Compile Include="KeystoneNET\SystemzError.cs" />
-    <Compile Include="KeystoneNET\X86Error.cs" />
-    <Compile Include="KeystoneNET\Keystone.cs" />
-    <Compile Include="KeystoneNET\KeystoneEncoded.cs" />
-    <Compile Include="KeystoneNET\KeystoneImports.cs" />
-    <Compile Include="debugwatch\AssemblerView.cs">
-      <SubType>Form</SubType>
-    </Compile>
-    <Compile Include="debugwatch\DebugWatchForm.cs">
-      <SubType>Form</SubType>
-    </Compile>
-    <Compile Include="debugwatch\MemoryMapView.cs">
-      <SubType>Form</SubType>
-    </Compile>
-    <Compile Include="debugwatch\MemoryScanner.cs" />
-    <Compile Include="debugwatch\MemoryViewByteProvider.cs" />
-    <Compile Include="debugwatch\Program.cs" />
-    <Compile Include="debugwatch\RichTextBoxExtensions.cs" />
-    <Compile Include="debugwatch\Settings.cs" />
-    <Compile Include="debugwatch\Properties\Resources.cs" />
-    <Compile Include="debugwatch\Properties\Settings.cs" />
-    <Compile Include="AssemblyInfo.cs" />
-  </ItemGroup>
-  <ItemGroup>
-    <EmbeddedResource Include="debugwatch\AssemblerView.resx" />
-    <EmbeddedResource Include="debugwatch\DebugWatchForm.resx" />
-    <EmbeddedResource Include="debugwatch\MemoryMapView.resx" />
-    <EmbeddedResource Include="debugwatch\Properties\Resources.resx" />
-  </ItemGroup>
-  <ItemGroup>
-    <Folder Include="_scratch\" />
-  </ItemGroup>
-  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+
 </Project>

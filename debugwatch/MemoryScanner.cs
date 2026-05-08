@@ -4,6 +4,19 @@
 // MVID: C42DB83B-FBD0-4471-97D2-F43102A97A5F
 // Assembly location: C:\Users\x\Downloads\PS4\debugwatch\dbgw\dbgw.exe
 
+// -------------------------------------------------------------------------
+// Fixes applied (SC fork):
+//   - CompareLessThan: was returning SequenceEqual (equality), now does correct
+//     type-aware less-than comparison using BitConverter
+//   - CompareGreaterThan: same — was returning SequenceEqual, now correct
+//   - ScanMemory: lastReadableMemoryAddress was data.Length-(typeLength+1),
+//     off by one — last valid address was never scanned. Fixed to data.Length-typeLength
+//   - ScanMemory default path: removed per-byte ScanProgressBar.Increment call
+//     that caused the bar to overflow (max is region count, not byte count)
+//   - Progress bar is now incremented in the outer loop in DebugWatchForm,
+//     once per region, so it accurately reflects scan progress
+// -------------------------------------------------------------------------
+
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -113,12 +126,30 @@ namespace debugwatch
 
         public static bool CompareLessThan(byte[] v1, byte[] v2, MemoryScanner.SCAN_TYPE type)
         {
-            return ((IEnumerable<byte>) v1).SequenceEqual<byte>((IEnumerable<byte>) v2);
+            switch (type)
+            {
+                case SCAN_TYPE.BYTE:   return v1[0] < v2[0];
+                case SCAN_TYPE.SHORT:  return BitConverter.ToInt16(v1, 0) < BitConverter.ToInt16(v2, 0);
+                case SCAN_TYPE.INTEGER: return BitConverter.ToInt32(v1, 0) < BitConverter.ToInt32(v2, 0);
+                case SCAN_TYPE.LONG:   return BitConverter.ToInt64(v1, 0) < BitConverter.ToInt64(v2, 0);
+                case SCAN_TYPE.FLOAT:  return BitConverter.ToSingle(v1, 0) < BitConverter.ToSingle(v2, 0);
+                case SCAN_TYPE.DOUBLE: return BitConverter.ToDouble(v1, 0) < BitConverter.ToDouble(v2, 0);
+                default: return false;
+            }
         }
 
         public static bool CompareGreaterThan(byte[] v1, byte[] v2, MemoryScanner.SCAN_TYPE type)
         {
-            return ((IEnumerable<byte>) v1).SequenceEqual<byte>((IEnumerable<byte>) v2);
+            switch (type)
+            {
+                case SCAN_TYPE.BYTE:   return v1[0] > v2[0];
+                case SCAN_TYPE.SHORT:  return BitConverter.ToInt16(v1, 0) > BitConverter.ToInt16(v2, 0);
+                case SCAN_TYPE.INTEGER: return BitConverter.ToInt32(v1, 0) > BitConverter.ToInt32(v2, 0);
+                case SCAN_TYPE.LONG:   return BitConverter.ToInt64(v1, 0) > BitConverter.ToInt64(v2, 0);
+                case SCAN_TYPE.FLOAT:  return BitConverter.ToSingle(v1, 0) > BitConverter.ToSingle(v2, 0);
+                case SCAN_TYPE.DOUBLE: return BitConverter.ToDouble(v1, 0) > BitConverter.ToDouble(v2, 0);
+                default: return false;
+            }
         }
 
         public static Dictionary<ulong, byte[]> ScanMemory(
@@ -130,7 +161,7 @@ namespace debugwatch
         {
             uint typeLength = MemoryScanner.GetTypeLength(type);
             Dictionary<ulong, byte[]> resultsDictionary = new Dictionary<ulong, byte[]>();
-            uint lastReadableMemoryAddress = (uint) data.Length - (typeLength + 1); // Last memory address you can read out of this buffer without causing an exception.
+            uint lastReadableMemoryAddress = (uint) data.Length - typeLength; // Last memory address you can read out of this buffer without causing an exception.
 
             uint flooredSegmentLength = (uint) Math.Floor((decimal) data.Length / ThreadCount);
             bool useDefaultSearch = flooredSegmentLength < typeLength;
@@ -145,8 +176,6 @@ namespace debugwatch
                     {
                         resultsDictionary.Add(address + (ulong) index, value);
                     }
-
-                    DebugWatchForm.Singleton.ScanProgressBar.Invoke((p) => p.Increment(1));
                 }
                 return resultsDictionary;
             }
@@ -176,8 +205,6 @@ namespace debugwatch
                     {
                         resultsDictionary.Add(keyValuePair.Key, keyValuePair.Value);
                     }
-                    // Update progress UI
-                    DebugWatchForm.Singleton.ScanProgressBar.Invoke((p) => p.Increment(1));
                 }
             }
 

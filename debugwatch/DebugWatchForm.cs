@@ -4,6 +4,68 @@
 // MVID: C42DB83B-FBD0-4471-97D2-F43102A97A5F
 // Assembly location: C:\Users\x\Downloads\PS4\debugwatch\dbgw\dbgw.exe
 
+// -------------------------------------------------------------------------
+// Fixes applied (SC fork):
+//
+// [DebugWatchForm]
+//   - Window title now reads version from assembly at runtime (PS4 Debug vX.Y)
+//   - ConnectButton grayed out after connecting; restored correctly on detach/
+//     reboot/kill so the user can reconnect without restarting the app
+//   - AttachButton/DetachButton state correctly managed across all paths
+//   - ProcessResume() called immediately after AttachDebugger() so the game
+//     is never auto-paused on attach
+//   - ProcessResume() called before DetachDebugger() in both the Detach button
+//     and FormClosing so the game is never left frozen
+//   - FormClosing: DetachDebugger/Disconnect wrapped in try/catch so a dropped
+//     PS4 connection no longer causes a crash dialog on exit
+//   - PS4 notifications added: connect (210), attach (222), detach (222),
+//     disconnect on close (5 = "%s disconnected.")
+//   - MemoryMapView reused across opens instead of recreated each time, so
+//     checkbox selections are preserved (fix: mapview was newed in button click)
+//   - ScanDataGridView_CellContentClick: Cells[1].ToString() → Cells[1].Value
+//     .ToString() so GetTypeLength receives the cell value not the cell object
+//   - disableInterfaceWhileSearching: NextScanButton is now correctly skipped
+//     instead of the broken "cache reference then re-assign" no-op
+//   - SetAllButtonsEnabled: consolidated per-button Invoke calls into a single
+//     form-level Invoke to eliminate cross-thread InvokeRequired race that left
+//     all buttons permanently disabled after a scan
+//   - SetAllButtonsEnabled(true) restores Connect/Attach/Detach/Reboot/Refresh
+//     to the correct state based on actual connection/attach status, preventing
+//     Connect and Attach from reappearing after a scan while still attached
+//   - Progress bar now increments once per memory region (outer loop) instead
+//     of 8x per region (inside threaded GetMatches), so bar fills accurately
+//   - NextScanButton explicitly re-enabled after both scan paths (New Scan and
+//     Next Scan) to prevent it staying gray after a scan completes
+//   - Unused field 'lastScanType' removed
+//   - CS0649 suppressed on 'components' (WinForms designer pattern, intentional)
+//
+// [MemoryScanner]
+//   - CompareLessThan / CompareGreaterThan: both were calling SequenceEqual
+//     (equality check) — replaced with proper type-aware numeric comparisons
+//   - lastReadableMemoryAddress: was data.Length-(typeLength+1), off by one,
+//     causing the last valid address to never be scanned. Fixed to data.Length-typeLength
+//   - Default (single-threaded) scan path: removed bogus per-byte progress bar
+//     increment that was causing the bar to overflow massively
+//
+// [AssemblerView]
+//   - KS_MODE_MIPS64 → KS_MODE_64 (was passing MIPS mode to an x86 engine)
+//   - DllNotFoundException caught with a user-friendly message pointing to
+//     where keystone.dll should be placed
+//
+// [dbgw.csproj]
+//   - Converted from legacy ToolsVersion="4.0" to SDK-style project format
+//   - TargetFramework: v4.0 → net48 (developer pack widely available)
+//   - Prefer32Bit=false added so app runs as 64-bit on 64-bit OS
+//   - RootNamespace set to "debugwatch" to fix embedded .resx manifest names
+//   - DependentUpon metadata added to all .resx files so manifest names resolve
+//     as "debugwatch.FormName.resources" instead of "dbgw.debugwatch.FormName"
+//   - AutoRestore target added to run dotnet restore automatically on first build
+//     when project.assets.json is missing; guarded with SkipAutoRestore flag to
+//     prevent infinite recursion
+//   - lib\ excluded from auto-copy; keystone.dll copied with <Link> tag so it
+//     lands in win64\keystone.dll in the output folder as KeystoneImports expects
+// -------------------------------------------------------------------------
+
 using Be.Windows.Forms;
 using libdebug;
 using SharpDisasm;
@@ -27,7 +89,9 @@ namespace debugwatch
         private int attachpid;
         private MemoryMapView mapview;
         private byte[] data;
+        #pragma warning disable CS0649 // designer field, intentionally unassigned
         private IContainer components;
+        #pragma warning restore CS0649
         private Button ConnectButton;
         private Button AttachButton;
         private TextBox IpTextBox;
@@ -93,7 +157,6 @@ namespace debugwatch
         internal ProgressBar ScanProgressBar;
         private Button CreditsButton;
         internal static DebugWatchForm Singleton;
-        private MemoryScanner.SCAN_TYPE lastScanType = MemoryScanner.SCAN_TYPE.LONG;
 
         private ulong address
         {
@@ -114,6 +177,9 @@ namespace debugwatch
             this.BreaktypeComboBox.SelectedIndex = 0;
             this.ScanTypeComboBox.SelectedIndex = 0;
             Singleton = this;
+
+            var ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+            this.Text = $"PS4 Debug v{ver.Major}.{ver.Minor}";
         }
 
         private T[] SubArray<T>(T[] data, int index, int length)
@@ -127,9 +193,20 @@ namespace debugwatch
         {
             if (this.ps4 != null && this.ps4.IsConnected)
             {
-                if (this.ps4.IsDebugging)
-                    this.ps4.DetachDebugger();
-                this.ps4.Disconnect();
+                try
+                {
+                    if (this.ps4.IsDebugging)
+                    {
+                        try { this.ps4.ProcessResume(); } catch { }
+                        this.ps4.DetachDebugger();
+                    }
+                    this.ps4.Notify(5, "debug watch");
+                    this.ps4.Disconnect();
+                }
+                catch
+                {
+                    // PS4 connection already dropped — ignore and close cleanly
+                }
             }
 
             Settings.ip = this.IpTextBox.Text;
@@ -212,6 +289,7 @@ namespace debugwatch
             this.ps4 = new PS4DBG(this.IpTextBox.Text);
             this.ps4.Connect();
             this.ps4.Notify(210, "debug watch");
+            this.ConnectButton.Enabled = false;
             this.AttachButton.Enabled = true;
             this.RefreshButton.Enabled = true;
             this.RebootButton.Enabled = true;
@@ -231,6 +309,7 @@ namespace debugwatch
                 this.attachpid = int32;
                 this.mapview = new MemoryMapView(ps4.GetProcessInfo(attachpid), this.ps4.GetProcessMaps(attachpid));
                 this.ps4.Notify(222, "attached to " + strArray[1]);
+                this.ps4.ProcessResume(); // Don't pause the game on attach
                 this.MainPanel.Enabled = true;
                 this.AttachButton.Enabled = false;
                 this.DetachButton.Enabled = true;
@@ -246,8 +325,11 @@ namespace debugwatch
         {
             if (!this.ps4.IsDebugging)
                 return;
+            try { this.ps4.ProcessResume(); } catch { } // Resume before detach so game isn't left frozen
             this.ps4.DetachDebugger();
+            this.ps4.Notify(222, "debug watch detached");
             this.MainPanel.Enabled = false;
+            this.ConnectButton.Enabled = true;
             this.AttachButton.Enabled = true;
             this.DetachButton.Enabled = false;
         }
@@ -429,9 +511,10 @@ namespace debugwatch
                 MessageBoxIcon.Exclamation) != DialogResult.Yes)
                 return;
             this.ps4.Reboot();
+            this.ConnectButton.Enabled = true;
             this.RebootButton.Enabled = false;
             this.MainPanel.Enabled = false;
-            this.AttachButton.Enabled = true;
+            this.AttachButton.Enabled = false;
             this.DetachButton.Enabled = false;
         }
 
@@ -485,8 +568,11 @@ namespace debugwatch
 
         private void MemoryMapButton_Click(object sender, EventArgs e)
         {
-            this.mapview = new MemoryMapView(this.ps4.GetProcessInfo(this.attachpid), ps4.GetProcessMaps(attachpid));
-            int num = (int) this.mapview.ShowDialog();
+            // Reuse the existing mapview so checkbox selections are preserved across opens.
+            // mapview is first created in AttachButton_Click; only recreate if somehow null.
+            if (this.mapview == null)
+                this.mapview = new MemoryMapView(this.ps4.GetProcessInfo(this.attachpid), this.ps4.GetProcessMaps(this.attachpid));
+            this.mapview.ShowDialog();
         }
 
         private void KillProcessButton_Click(object sender, EventArgs e)
@@ -496,6 +582,7 @@ namespace debugwatch
                 return;
             this.ps4.ProcessKill();
             this.MainPanel.Enabled = false;
+            this.ConnectButton.Enabled = true;
             this.AttachButton.Enabled = true;
             this.DetachButton.Enabled = false;
             this.RefreshButton_Click((object) null, (EventArgs) null);
@@ -584,6 +671,8 @@ namespace debugwatch
                             ConvertMemorySegmentToValue(keyValuePair.Value, type)));
                     }
 
+                    // One tick per region — bar fills exactly as regions complete
+                    this.ScanProgressBar.Invoke((p) => p.Increment(1));
                     GC.Collect();
                 }
             }
@@ -593,36 +682,54 @@ namespace debugwatch
             this.NextScanButton.Invoke((b) => b.Enabled = true);
         }
 
+        private IEnumerable<Button> GetAllFormButtons()
+        {
+            return this.GetType()
+                .GetFields(BindingFlags.Instance | BindingFlags.NonPublic)
+                .Where(f => f.FieldType == typeof(Button))
+                .Select(f => f.GetValue(this) as Button)
+                .Where(b => b != null);
+        }
+
+        private void SetAllButtonsEnabled(bool enabled)
+        {
+            Action action = () =>
+            {
+                foreach (var btn in GetAllFormButtons())
+                {
+                    if (btn == NextScanButton)
+                        continue;
+                    btn.Enabled = enabled;
+                }
+
+                if (enabled)
+                {
+                    // Restore correct state based on connection/attach status
+                    bool connected = this.ps4 != null && this.ps4.IsConnected;
+                    bool attached  = connected && this.ps4.IsDebugging;
+
+                    this.ConnectButton.Enabled = !connected;
+                    this.AttachButton.Enabled  = connected && !attached;
+                    this.DetachButton.Enabled  = attached;
+                    this.RebootButton.Enabled  = connected;
+                    this.RefreshButton.Enabled = connected;
+                }
+            };
+
+            if (this.InvokeRequired)
+                this.Invoke(action);
+            else
+                action();
+        }
+
         private void disableInterfaceWhileSearching()
         {
-            // Keep Next Scan button the same
-            var cachedNextScan = NextScanButton;
-
-            var allFields = this.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic);
-            var buttonFieldInfos = allFields.Where(field => field.FieldType == typeof(Button));
-            foreach (var buttonFieldInfo in buttonFieldInfos)
-            {
-                var btn = (buttonFieldInfo.GetValue(this) as Button);
-                btn.Invoke((b) => { b.Enabled = false; });
-            }
-
-            NextScanButton = cachedNextScan;
+            SetAllButtonsEnabled(false);
         }
 
         private void reEnableInterfaceAfterDoneSearching()
         {
-            // Keep Next Scan button the same
-            var cachedNextScan = NextScanButton.Enabled;
-
-            var allFields = this.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic);
-            var buttonFieldInfos = allFields.Where(field => field.FieldType == typeof(Button));
-            foreach (var buttonFieldInfo in buttonFieldInfos)
-            {
-                var btn = (buttonFieldInfo.GetValue(this) as Button);
-                btn.Invoke((b) => b.Enabled = true);
-            }
-
-            NextScanButton.Invoke(b => b.Enabled = cachedNextScan);
+            SetAllButtonsEnabled(true);
         }
 
         private bool isSearchValueInvalid(MemoryScanner.SCAN_TYPE type)
@@ -780,6 +887,7 @@ namespace debugwatch
             }
             this.ScanProgressBar.Invoke(s => s.Value = 0);
             reEnableInterfaceAfterDoneSearching();
+            this.NextScanButton.Invoke((b) => b.Enabled = true);
         }
 
         private void FilterProcessListCheckBox_CheckedChanged(object sender, EventArgs e)
@@ -795,7 +903,7 @@ namespace debugwatch
             ulong uint64 = Convert.ToUInt64(dataGridView.Rows[e.RowIndex].Cells[0].Value.ToString().Trim().Replace("0x", ""),
                 16);
             ulong typeLength =
-                (ulong) MemoryScanner.GetTypeLength(dataGridView.Rows[e.RowIndex].Cells[1].ToString().Trim());
+                (ulong) MemoryScanner.GetTypeLength(dataGridView.Rows[e.RowIndex].Cells[1].Value.ToString().Trim());
             PS4DBG.WATCHPT_LENGTH watchptLength = PS4DBG.WATCHPT_LENGTH.DBREG_DR7_LEN_1;
             switch ((long) typeLength - 1L)
             {
@@ -1492,7 +1600,7 @@ namespace debugwatch
             this.Icon = (Icon) componentResourceManager.GetObject("$this.Icon");
             this.MaximizeBox = false;
             this.Name = nameof(DebugWatchForm);
-            this.Text = "Debug Watch";
+            this.Text = "Debug Watch v" + System.Reflection.Assembly.GetExecutingAssembly().GetName().Version.ToString(3);
             this.FormClosing += new FormClosingEventHandler(this.DebugWatchForm_FormClosing);
             ((ISupportInitialize) this.ScanDataGridView).EndInit();
             this.EditGroupBox.ResumeLayout(false);

@@ -17,7 +17,9 @@ namespace debugwatch
   {
     private ProcessInfo processinfo;
     private ProcessMap processMap;
+    #pragma warning disable CS0649 // designer field, intentionally unassigned
     private IContainer components;
+    #pragma warning restore CS0649
     private Button CloseButton;
     private CheckedListBox MemoryMapCheckedListBox;
     private Label HelpLabel;

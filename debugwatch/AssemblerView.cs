@@ -4,6 +4,14 @@
 // MVID: C42DB83B-FBD0-4471-97D2-F43102A97A5F
 // Assembly location: C:\Users\x\Downloads\PS4\debugwatch\dbgw\dbgw.exe
 
+// -------------------------------------------------------------------------
+// Fixes applied (SC fork):
+//   - AssembleButton_Click: KS_MODE_MIPS64 → KS_MODE_64 (MIPS mode was being
+//     passed to a KS_ARCH_X86 engine, which is invalid)
+//   - DllNotFoundException caught with a clear message telling the user where
+//     to place keystone.dll (lib\win64\ or lib\win32\) instead of crashing
+// -------------------------------------------------------------------------
+
 using KeystoneNET;
 using System;
 using System.ComponentModel;
@@ -16,7 +24,9 @@ namespace debugwatch
   {
     private ulong _address;
     private byte[] result;
+    #pragma warning disable CS0649 // designer field, intentionally unassigned
     private IContainer components;
+    #pragma warning restore CS0649
     private Button AssembleButton;
     private Button CloseButton;
     private TextBox AssemblerTextBox;
@@ -34,9 +44,24 @@ namespace debugwatch
 
     private void AssembleButton_Click(object sender, EventArgs e)
     {
-      using (Keystone keystone = new Keystone(KeystoneArchitecture.KS_ARCH_X86, KeystoneMode.KS_MODE_MIPS64, true))
-        this.result = keystone.Assemble(this.AssemblerTextBox.Text, this._address).Buffer;
-      this.Close();
+      try
+      {
+        using (Keystone keystone = new Keystone(KeystoneArchitecture.KS_ARCH_X86, KeystoneMode.KS_MODE_64, true))
+          this.result = keystone.Assemble(this.AssemblerTextBox.Text, this._address).Buffer;
+        this.Close();
+      }
+      catch (DllNotFoundException)
+      {
+        MessageBox.Show(
+          "keystone.dll could not be found.\n\n" +
+          "Download the Keystone engine binaries and place keystone.dll in:\n" +
+          "  lib\\win64\\keystone.dll  (for 64-bit)\n" +
+          "  lib\\win32\\keystone.dll  (for 32-bit)\n\n" +
+          "Get it from: https://github.com/keystone-engine/keystone/releases",
+          "Missing keystone.dll",
+          MessageBoxButtons.OK,
+          MessageBoxIcon.Error);
+      }
     }
 
     private void CloseButton_Click(object sender, EventArgs e)
